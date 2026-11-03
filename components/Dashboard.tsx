@@ -12,6 +12,7 @@ const VIEWS = [
 ] as const;
 type View = (typeof VIEWS)[number][0];
 const REFRESH_MIN = Number(process.env.NEXT_PUBLIC_REFRESH_MINUTES) || 5;
+const GROUP_KEY = 'di.group';
 const isWide = () => typeof window !== 'undefined' && window.matchMedia('(min-width:1180px)').matches;
 
 export default function Dashboard() {
@@ -23,13 +24,24 @@ export default function Dashboard() {
   const [tf, setTf] = useState<TF>(defaultTF);
   const askFn = useRef<((q: string) => void) | null>(null);
   const headerRef = useRef<HTMLElement>(null);
+  // null = grupo por defecto del servidor (TEAM_DEFAULT_GROUP); '*' = todos; otro valor = nombre del grupo
+  const groupRef = useRef<string | null>(null);
 
-  const load = useCallback(async (force = false) => {
+  const load = useCallback(async function run(force = false): Promise<void> {
     setBusy(true);
     try {
-      const res = await fetch(`/api/jira/sync${force ? '?force=1' : ''}`, { cache: 'no-store' });
+      const q = new URLSearchParams();
+      if (force) q.set('force', '1');
+      if (groupRef.current) q.set('group', groupRef.current);
+      const res = await fetch(`/api/jira/sync?${q}`, { cache: 'no-store' });
       if (res.status === 401) { window.location.href = '/login'; return; }
       const j = await res.json();
+      if (res.status === 400 && j.code === 'unknown_group' && groupRef.current) {
+        // El grupo guardado ya no existe en TEAM_GROUPS: vuelve al grupo por defecto
+        groupRef.current = null;
+        try { localStorage.removeItem(GROUP_KEY); } catch { /* sin almacenamiento */ }
+        return run(force);
+      }
       if (!res.ok) setErr(j); else { setModel(j); setErr(null); }
     } catch {
       setErr({ error: 'No hay conexión con el servidor.' });
@@ -38,7 +50,15 @@ export default function Dashboard() {
     }
   }, []);
 
+  const changeGroup = (g: string) => {
+    groupRef.current = g;
+    try { localStorage.setItem(GROUP_KEY, g); } catch { /* sin almacenamiento */ }
+    setTf(defaultTF);
+    load();
+  };
+
   useEffect(() => {
+    try { groupRef.current = localStorage.getItem(GROUP_KEY); } catch { /* sin almacenamiento */ }
     load();
     const id = setInterval(() => { if (document.visibilityState === 'visible') load(); }, REFRESH_MIN * 60000);
     return () => clearInterval(id);
@@ -86,6 +106,12 @@ export default function Dashboard() {
             <div><h1>Development Intelligence</h1><div className="sub">Aplicaciones Digitales · seguimiento sobre Jira</div></div>
           </div>
           <div className="source">
+            {model && model.groups.length > 0 && (
+              <select aria-label="Grupo de responsables" value={model.group ?? '*'} onChange={(e) => changeGroup(e.target.value)} disabled={busy}>
+                <option value="*">Todos los responsables</option>
+                {model.groups.map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+            )}
             <span className={`dot ${busy ? 'busy' : err ? 'err' : ''}`} />
             {model ? (
               <span title={model.jql}>{new URL(model.site).host} · sincronizado {fDT(model.ref)} · {model.issues.length} issues</span>
@@ -112,8 +138,13 @@ export default function Dashboard() {
             </div>
           )}
           {!model && !err && <div className="skeleton"><span className="thinking">Consultando Jira…</span></div>}
-          {model && model.issues.length === 0 && (
+          {model && model.issues.length === 0 && (model.group ? (
+            <div className="banner info"><p><strong>Ningún issue sincronizado está asignado al grupo «{model.group}».</strong> Revisa los nombres del grupo en TEAM_GROUPS o elige «Todos los responsables».</p></div>
+          ) : (
             <div className="banner info"><p><strong>La consulta no devolvió issues.</strong> Revisa las claves de proyecto y el rango de fechas de JIRA_JQL en Vercel. JQL actual: <code>{model.jql}</code></p></div>
+          ))}
+          {model && model.group && model.groupMissing.length > 0 && (
+            <div className="banner"><p>Del grupo «{model.group}», estas personas no son responsables de ningún issue sincronizado: <strong>{model.groupMissing.join(', ')}</strong>. Si deberían tener tareas, revisa que el nombre en TEAM_GROUPS esté escrito igual que en Jira o usa su accountId.</p></div>
           )}
           {model && model.truncated && <div className="banner"><p>La sincronización llegó al límite de páginas (JIRA_MAX_PAGES). Acota el JQL o sube el límite para traer todo.</p></div>}
           {ctx && model!.issues.length > 0 && (
@@ -127,7 +158,7 @@ export default function Dashboard() {
             </>
           )}
         </main>
-        <AgentPanel registerAsk={registerAsk} syncedAt={model?.ref ?? null} />
+        <AgentPanel registerAsk={registerAsk} syncedAt={model?.ref ?? null} group={model ? model.group ?? '*' : null} />
       </div>
 
       {openKey && byKey.get(openKey) && <IssueDrawer i={byKey.get(openKey)!} onClose={closeDrawer} onAsk={ask} />}

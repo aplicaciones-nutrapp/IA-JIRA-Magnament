@@ -39,7 +39,7 @@ function cap<T extends { items: unknown[]; truncado?: boolean }>(o: T, max = 400
 
 export function metricsSummary(m: Model) {
   return {
-    fecha_referencia: iso(m.ref), jql: m.jql, kpis: m.kpi,
+    fecha_referencia: iso(m.ref), jql: m.jql, grupo: m.group ?? 'todos los responsables', kpis: m.kpi,
     proyectos: m.projects.map((p) => ({ key: p.key, nombre: p.name, abiertos: p.open, en_curso: p.inprog, vencidos: p.overdue, bloqueados: p.blocked, detenidas: p.stale, resueltos_30d: p.done30, abierto_mas_antiguo_dias: Math.round(p.oldest) })),
     equipo: m.team.map((p) => ({ persona: p.name, abiertos: p.open, en_curso: p.inprog, sp_abiertos: m.hasSP ? p.spOpen : undefined, vencidos: p.overdue, bloqueados: p.blocked, detenidas: p.stale, resueltos_30d: p.done30, sp_resueltos_30d: m.hasSP ? p.spDone30 : undefined, mediana_resolucion_dias: p.medRes, ultima_actividad: day(p.last) })),
     sprints_activos: m.sprints.map((s) => ({ nombre: s.name, inicio: day(s.start), fin: day(s.end), issues: s.total, finalizados: s.done, sp_total: s.spT, sp_finalizados: s.spD, avance_pct: Math.round(s.prog * 100), tiempo_transcurrido_pct: s.elapsed != null ? Math.round(s.elapsed * 100) : null, bloqueados: s.blocked })),
@@ -135,6 +135,9 @@ export function systemPrompt(m: Model) {
   return `Eres «Development Intelligence», el agente de inteligencia operativa del área de Aplicaciones Digitales. Ayudas al líder de desarrollo a tener visibilidad del trabajo de los equipos, anticipar problemas y decidir con datos reales de Jira.
 
 FUENTE: Jira Cloud (${m.site}) vía REST API. Sincronización del ${iso(m.ref)} con el JQL: ${m.jql}. ${m.issues.length} issues${m.truncated ? ' (la sincronización alcanzó el límite de páginas; puede haber más)' : ''}.
+${m.group
+    ? `GRUPO ACTIVO: «${m.group}» (responsables: ${m.groupMembers.join(', ')}). La sincronización y las herramientas sobre ella solo contienen issues asignados a este grupo; habla del grupo, no de todo el equipo. consultar_jql NO aplica el filtro: si lo necesitas agrega al JQL assignee in (${m.groupAccountIds.map((a) => `"${a}"`).join(', ') || 'sin accountIds detectados'}).${m.groupMissing.length ? ` Sin issues asignados en la sincronización: ${m.groupMissing.join(', ')}.` : ''}`
+    : 'GRUPO ACTIVO: todos los responsables.'}
 Herramientas: buscar_issues, detalle_issue, metricas_equipo, stoppers, despliegues, comentarios, evolucion (sobre la sincronización) y consultar_jql (consulta en vivo con JQL para lo que esté fuera de ella).
 
 REGLAS

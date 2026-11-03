@@ -118,12 +118,12 @@ const mondayOf = (t: number) => {
 };
 
 /* ───────── modelo completo ───────── */
-export function buildModel(raw: Raw[], names: Record<string, string>, o: { site: string; jql: string; truncated: boolean; rules: Rules }): Model {
+export function buildModel(raw: Raw[], names: Record<string, string>, o: { site: string; jql: string; truncated: boolean; rules: Rules; now?: number }): Model {
   const R = o.rules;
   const RE = { PRD: safeRe(R.prd), QA: safeRe(R.qa), DEV: safeRe(R.dev), block: safeRe(R.block) };
   const envOf = (s: string): EnvName | null => (!s ? null : RE.PRD.test(s) ? 'PRD' : RE.QA.test(s) ? 'QA' : RE.DEV.test(s) ? 'DEV' : null);
   const F = detectFields(names, raw);
-  const now = Date.now();
+  const now = o.now ?? Date.now();
 
   const issues: Issue[] = raw.map((it) => {
     const b = normalize(it, F, o.site);
@@ -277,5 +277,6 @@ export function buildModel(raw: Raw[], names: Record<string, string>, o: { site:
     ref: now, site: o.site, jql: o.jql, truncated: o.truncated,
     fields: { sp: F.sp, sprint: F.sprint, flagged: F.flagged }, hasSP, rules: R,
     kpi, alerts, stoppers, deploys, team, projects, sprints, weeks, issues,
+    group: null, groups: [], groupMembers: [], groupMissing: [], groupAccountIds: [],
   };
 }

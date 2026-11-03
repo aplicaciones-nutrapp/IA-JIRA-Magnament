@@ -30,7 +30,7 @@ function download(text: string, q: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export default function AgentPanel({ registerAsk, syncedAt }: { registerAsk: (fn: (q: string) => void) => void; syncedAt: number | null }) {
+export default function AgentPanel({ registerAsk, syncedAt, group }: { registerAsk: (fn: (q: string) => void) => void; syncedAt: number | null; group: string | null }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -38,6 +38,15 @@ export default function AgentPanel({ registerAsk, syncedAt }: { registerAsk: (fn
   const logRef = useRef<HTMLDivElement>(null);
   const msgsRef = useRef<Msg[]>([]);
   msgsRef.current = msgs;
+  const groupRef = useRef<string | null>(group);
+  groupRef.current = group;
+
+  // Al cambiar de grupo la conversación anterior ya no aplica: se reinicia
+  const prevGroup = useRef(group);
+  useEffect(() => {
+    if (prevGroup.current !== null && group !== null && prevGroup.current !== group) { ctl.current?.abort(); setMsgs([]); }
+    if (group !== null) prevGroup.current = group;
+  }, [group]);
 
   useEffect(() => { logRef.current?.scrollTo({ top: logRef.current.scrollHeight }); }, [msgs]);
 
@@ -52,7 +61,7 @@ export default function AgentPanel({ registerAsk, syncedAt }: { registerAsk: (fn
     ctl.current = c;
     setBusy(true);
     try {
-      const res = await fetch('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: turns }), signal: c.signal });
+      const res = await fetch('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: turns, group: groupRef.current ?? undefined }), signal: c.signal });
       if (res.status === 401) { window.location.href = '/login'; return; }
       if (!res.ok || !res.body) {
         const j = await res.json().catch(() => ({}));
@@ -99,7 +108,7 @@ export default function AgentPanel({ registerAsk, syncedAt }: { registerAsk: (fn
     <aside className="agent" aria-label="Agente">
       <div className="ag-head">
         <h2>Agente</h2>
-        <span className="note">{syncedAt ? 'consulta Jira con tus credenciales del servidor' : ''}</span>
+        <span className="note">{!syncedAt ? '' : group && group !== '*' ? `analiza el grupo «${group}»` : 'analiza todos los responsables'}</span>
       </div>
       <div className="ag-log" ref={logRef}>
         {msgs.length === 0 && (

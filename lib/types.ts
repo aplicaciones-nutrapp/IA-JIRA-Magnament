@@ -110,6 +110,13 @@ export interface Model {
   sprints: SprintStat[];
   weeks: Week[];
   issues: Issue[];
+  /** Grupo de responsables aplicado (null = todos) y grupos configurados en TEAM_GROUPS. */
+  group: string | null;
+  groups: string[];
+  groupMembers: string[];
+  /** Miembros del grupo que no son responsables de ningún issue sincronizado. */
+  groupMissing: string[];
+  groupAccountIds: string[];
 }
 
-export interface SyncError { error: string; detail?: string }
+export interface SyncError { error: string; detail?: string; code?: string }

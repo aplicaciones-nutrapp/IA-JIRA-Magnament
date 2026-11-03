@@ -1,6 +1,6 @@
 import 'server-only';
 import { buildModel } from './analyze';
-import { DEFAULT_JQL, cacheSeconds, env, maxPages, rules } from './env';
+import { DEFAULT_JQL, cacheSeconds, defaultGroupName, env, maxPages, normName, rules, teamGroups, type TeamGroup } from './env';
 import type { Model } from './types';
 
 export class JiraError extends Error {
@@ -58,21 +58,78 @@ export async function searchJql(jql: string, opts: { pages?: number; signal?: Ab
   return { issues, names, truncated, site };
 }
 
-/* ───────── caché en memoria de la instancia ───────── */
-let cache: { at: number; model: Model } | null = null;
-let inflight: Promise<Model> | null = null;
+/* ───────── grupos de responsables ───────── */
+export class GroupError extends Error {
+  constructor(public group: string) {
+    super(`El grupo «${group}» no existe en TEAM_GROUPS.`);
+  }
+}
 
-export async function getModel(force = false): Promise<Model> {
-  if (!force && cache && Date.now() - cache.at < cacheSeconds() * 1000) return cache.model;
+/** null o '' = grupo por defecto (TEAM_DEFAULT_GROUP); '*' = todos los responsables. */
+export function resolveGroup(name: string | null | undefined): TeamGroup | null {
+  const groups = teamGroups();
+  const wanted = name == null || name === '' ? defaultGroupName() : name;
+  if (!wanted || wanted === '*') return null;
+  const g = groups.find((x) => normName(x.name) === normName(wanted));
+  if (!g) throw new GroupError(wanted);
+  return g;
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function filterByGroup(issues: any[], g: TeamGroup) {
+  const toks = g.members.map((m) => ({ raw: m, n: normName(m) }));
+  const hit = new Set<number>();
+  const accountIds = new Set<string>();
+  const out = issues.filter((it) => {
+    const a = it.fields?.assignee;
+    if (!a) return false;
+    const dn = normName(a.displayName || '');
+    const em = normName(a.emailAddress || '');
+    const idx = toks.findIndex((t) => t.raw === a.accountId || t.n === dn || (em !== '' && t.n === em));
+    if (idx < 0) return false;
+    hit.add(idx);
+    if (a.accountId) accountIds.add(a.accountId);
+    return true;
+  });
+  return { issues: out, missing: g.members.filter((_, k) => !hit.has(k)), accountIds: [...accountIds] };
+}
+
+/* ───────── caché en memoria de la instancia ───────── */
+interface RawCache { at: number; issues: any[]; names: Record<string, string>; truncated: boolean; site: string; jql: string }
+let raw: RawCache | null = null;
+let inflight: Promise<RawCache> | null = null;
+const models = new Map<string, Model>();
+
+async function getRaw(force: boolean): Promise<RawCache> {
+  if (!force && raw && Date.now() - raw.at < cacheSeconds() * 1000) return raw;
   if (inflight) return inflight;
   inflight = (async () => {
     const jql = env('JIRA_JQL', DEFAULT_JQL);
-    const { issues, names, truncated, site } = await searchJql(jql);
-    const model = buildModel(issues, names, { site, jql, truncated, rules: rules() });
-    cache = { at: Date.now(), model };
-    return model;
+    const r = await searchJql(jql);
+    raw = { at: Date.now(), jql, ...r };
+    models.clear();
+    return raw;
   })().finally(() => { inflight = null; });
   return inflight;
+}
+
+export async function getModel(force = false, group?: string | null): Promise<Model> {
+  const g = resolveGroup(group);
+  const r = await getRaw(force);
+  const key = g?.name ?? '*';
+  const cached = models.get(key);
+  if (cached && cached.ref === r.at) return cached;
+  const f = g ? filterByGroup(r.issues, g) : { issues: r.issues, missing: [], accountIds: [] };
+  const model: Model = {
+    ...buildModel(f.issues, r.names, { site: r.site, jql: r.jql, truncated: r.truncated, rules: rules(), now: r.at }),
+    group: g?.name ?? null,
+    groups: teamGroups().map((x) => x.name),
+    groupMembers: g?.members ?? [],
+    groupMissing: f.missing,
+    groupAccountIds: f.accountIds,
+  };
+  models.set(key, model);
+  return model;
 }
 
 /** Consulta puntual (para el agente): JQL libre, máximo 2 páginas, sin tocar la caché. */

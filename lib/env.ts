@@ -35,5 +35,32 @@ export function rules(): Rules {
   };
 }
 
+export const normName = (s: string) =>
+  s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+export interface TeamGroup { name: string; members: string[] }
+
+/**
+ * TEAM_GROUPS define grupos de responsables:
+ *   Aplicaciones: Ana Pérez, Luis Gómez; Diseño: María Ruiz
+ * Grupos separados por ";" (o salto de línea); nombre y miembros separados por el primer ":";
+ * miembros separados por ",". Cada miembro puede ser el nombre visible en Jira, el correo o el accountId.
+ */
+export function teamGroups(): TeamGroup[] {
+  const src = process.env.TEAM_GROUPS || '';
+  const out: TeamGroup[] = [];
+  for (const seg of src.split(/[;\n]/)) {
+    const s = seg.trim();
+    if (!s) continue;
+    const i = s.indexOf(':');
+    const name = (i > 0 ? s.slice(0, i) : 'Mi equipo').trim();
+    const members = (i > 0 ? s.slice(i + 1) : s).split(',').map((m) => m.trim()).filter(Boolean);
+    if (name && members.length && !out.some((g) => normName(g.name) === normName(name))) out.push({ name, members });
+  }
+  return out;
+}
+
+export const defaultGroupName = () => (process.env.TEAM_DEFAULT_GROUP || '').trim() || null;
+
 export const cacheSeconds = () => num('JIRA_CACHE_SECONDS', 300);
 export const maxPages = () => num('JIRA_MAX_PAGES', 20);

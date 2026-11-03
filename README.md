@@ -53,6 +53,8 @@ proxy.ts                  exige sesión en toda la app
    | `APP_PASSWORD` | sí | contraseña para entrar a la app |
    | `SESSION_SECRET` | sí | 32+ caracteres aleatorios |
    | `ANTHROPIC_API_KEY` | para el agente | key del paso 2 |
+   | `TEAM_GROUPS` | no | `Aplicaciones: Ana Pérez, Luis Gómez; Diseño: María Ruiz` |
+   | `TEAM_DEFAULT_GROUP` | no | `Aplicaciones` (vacío = todos) |
    | `ANTHROPIC_MODEL` | no | `claude-sonnet-5-5` |
    | `JIRA_CACHE_SECONDS` | no | `300` |
    | `JIRA_MAX_PAGES` | no | `20` (100 issues por página) |
@@ -67,6 +69,16 @@ proxy.ts                  exige sesión en toda la app
    ```
 6. **Deploy**. Cada cambio de variables requiere volver a desplegar (Deployments → ⋯ → Redeploy).
 7. **Dominio propio** (opcional): Settings → Domains → agrega, por ejemplo, `jira.nutrapp.com.co` y crea en GoDaddy el registro CNAME que indique Vercel.
+
+## Grupos de responsables
+
+`TEAM_GROUPS` define grupos personalizados de responsables (assignee). En el encabezado aparece un selector con cada grupo y «Todos los responsables»; al elegir uno, todas las vistas, KPIs, alertas y el agente se calculan solo con los issues asignados a esas personas. La elección queda guardada en el navegador.
+
+- Formato: `Grupo: miembro, miembro; Otro grupo: miembro`.
+- Un miembro puede ser el nombre visible en Jira (no distingue mayúsculas ni tildes), el correo o el accountId.
+- Si alguien del grupo no aparece como responsable de ningún issue sincronizado, la app lo avisa: suele ser un nombre mal escrito.
+- Para obtener el accountId de una persona: `https://<sitio>.atlassian.net/rest/api/3/user/search?query=nombre` (campo `accountId`).
+- El filtro se aplica después de sincronizar. Si solo te interesa un grupo y la sincronización llega al límite de páginas, agrega también `AND assignee in ("accountId1", "accountId2")` al `JIRA_JQL`.
 
 ## Desarrollo local
 

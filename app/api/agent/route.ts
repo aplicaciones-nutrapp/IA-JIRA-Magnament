@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { agentTools, systemPrompt } from '@/lib/agent';
 import { ConfigError, DEFAULT_MODEL, env } from '@/lib/env';
-import { JiraError, getModel } from '@/lib/jira';
+import { GroupError, JiraError, getModel } from '@/lib/jira';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -29,6 +29,7 @@ function cleanTurns(v: unknown): Turn[] {
 
 function errorText(e: unknown) {
   if (e instanceof ConfigError) return `${e.message}. Agrégala en Vercel y vuelve a desplegar.`;
+  if (e instanceof GroupError) return `${e.message} Elige otro grupo en el selector.`;
   if (e instanceof JiraError) return `${e.message}${e.detail ? ` (${e.detail})` : ''}`;
   if (e instanceof Anthropic.APIError) {
     if (e.status === 401) return 'La API de Claude rechazó ANTHROPIC_API_KEY.';
@@ -43,6 +44,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const turns = cleanTurns(body?.messages);
   if (!turns.length || turns.at(-1)!.role !== 'user') return Response.json({ error: 'Falta la pregunta.' }, { status: 400 });
+  const group = typeof body?.group === 'string' ? body.group : null;
 
   const enc = new TextEncoder();
   const abort = new AbortController();
@@ -53,7 +55,7 @@ export async function POST(req: Request) {
       const send = (o: object) => { try { ctrl.enqueue(enc.encode(JSON.stringify(o) + '\n')); } catch { /* cliente cerró */ } };
       try {
         const client = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') });
-        const model = await getModel();
+        const model = await getModel(false, group);
         send({ type: 'meta', ref: model.ref });
         const tools = agentTools(model);
         const messages: Anthropic.MessageParam[] = turns.map((t) => ({ role: t.role, content: t.content }));
