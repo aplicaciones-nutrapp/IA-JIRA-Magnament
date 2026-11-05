@@ -6,12 +6,14 @@ import AgentPanel from './AgentPanel';
 import IssueDrawer from './IssueDrawer';
 import PersonDrawer from './PersonDrawer';
 import type { Period } from '@/lib/format';
-import { Comentarios, Despliegues, Equipo, Resumen, Stoppers, Tareas, defaultTF, type KpiTarget, type TF } from './views';
+import { Comentarios, Completadas, Despliegues, Equipo, Resumen, Stoppers, Tareas, defaultTF, type KpiTarget, type TF } from './views';
+import { isDone } from '@/lib/rules';
+import { inPeriod } from '@/lib/format';
 import { RulesCtx } from './ui';
 
 const VIEWS = [
   ['resumen', 'Resumen'], ['equipo', 'Equipo'], ['stoppers', 'Stoppers'], ['tareas', 'Tareas'],
-  ['despliegues', 'Despliegues'], ['comentarios', 'Comentarios'], ['agente', 'Agente'],
+  ['despliegues', 'Despliegues'], ['comentarios', 'Comentarios'], ['completadas', 'Completadas'], ['agente', 'Agente'],
 ] as const;
 type View = (typeof VIEWS)[number][0];
 const REFRESH_MIN = Number(process.env.NEXT_PUBLIC_REFRESH_MINUTES) || 5;
@@ -31,7 +33,7 @@ export default function Dashboard() {
   const [period, setPeriodState] = useState<Period>('hoy');
   const [agentCollapsed, setAgentCollapsed] = useState(false);
   // Filtros iniciales al llegar desde una métrica del resumen (n fuerza a reiniciar la vista)
-  const [preset, setPreset] = useState<{ n: number; stop?: 'todos' | 'hechos' | 'inferidos'; dep?: { env: 'todos' | 'DEV' | 'QA' | 'PRD'; days: number } }>({ n: 0 });
+  const [preset, setPreset] = useState<{ n: number; stop?: 'todos' | 'hechos' | 'inferidos'; done?: '30d'; dep?: { env: 'todos' | 'DEV' | 'QA' | 'PRD'; days: number } }>({ n: 0 });
   const askFn = useRef<((q: string) => void) | null>(null);
   const headerRef = useRef<HTMLElement>(null);
   // null = grupo por defecto del servidor (TEAM_DEFAULT_GROUP); '*' = todos; otro valor = nombre del grupo
@@ -118,6 +120,7 @@ export default function Dashboard() {
     const n = preset.n + 1;
     if (t === 'blocked') { setPreset({ n, stop: 'hechos' }); go('stoppers'); return; }
     if (t === 'prd7') { setPreset({ n, dep: { env: 'PRD', days: 7 } }); go('despliegues'); return; }
+    if (t === 'done30') { setPreset({ n, done: '30d' }); go('completadas'); return; }
     const map: Record<string, Partial<TF>> = {
       open: { cat: 'abiertos' }, inprog: { cat: 'indeterminate' }, overdue: { cat: 'abiertos', flags: ['vencidos'] }, done30: { cat: 'todos', flags: ['completados30'] },
     };
@@ -128,6 +131,7 @@ export default function Dashboard() {
 
   const ctx = model ? { m: model, byKey, open: setOpenKey, openPerson: setPerson } : null;
   const hot = model ? model.stoppers.filter((s) => s.kind === 'hecho').length : 0;
+  const doneToday = useMemo(() => (model ? model.issues.filter((i) => isDone(i) && inPeriod(i.resolved, 'hoy')).length : 0), [model]);
 
   return (
     <RulesCtx.Provider value={model?.rules ?? null}>
@@ -161,7 +165,7 @@ export default function Dashboard() {
         <nav className="tabs" aria-label="Vistas">
           {VIEWS.map(([k, l]) => (
             <a key={k} href={`#${k}`} className={k === 'agente' ? 'tab-agent' : undefined} aria-current={view === k ? 'page' : undefined} onClick={(e) => { e.preventDefault(); go(k); }}>
-              {l}{k === 'stoppers' && model && <span className={`count ${hot ? 'hot' : ''}`}>{model.stoppers.length}</span>}
+              {l}{k === 'stoppers' && model && <span className={`count ${hot ? 'hot' : ''}`}>{model.stoppers.length}</span>}{k === 'completadas' && model && doneToday > 0 && <span className="count ok" title="Completadas hoy">{doneToday} hoy</span>}
             </a>
           ))}
         </nav>
@@ -193,6 +197,7 @@ export default function Dashboard() {
               {view === 'tareas' && <Tareas {...ctx} tf={tf} setTf={setTf} />}
               {view === 'despliegues' && <Despliegues key={`dp-${preset.n}`} {...ctx} init={preset.dep} />}
               {view === 'comentarios' && <Comentarios {...ctx} />}
+              {view === 'completadas' && <Completadas key={`cp-${preset.n}`} {...ctx} initPeriod={preset.done} />}
             </>
           )}
         </main>

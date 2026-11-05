@@ -1,8 +1,8 @@
 'use client';
 import { useMemo, useState } from 'react';
 import type { Deploy, Issue, Model, Week } from '@/lib/types';
-import { DAY, TAGS, TONE_LABEL, clip, isDone, r1, tagsOf } from '@/lib/rules';
-import { dayOf, daysTxt, fH, fS, inPeriod, relDayLabel } from '@/lib/format';
+import { DAY, TAGS, TONE_LABEL, clip, isDone, median, r1, tagsOf } from '@/lib/rules';
+import { PERIODS, type Period, dayOf, daysTxt, fH, fS, inPeriod, relDayLabel } from '@/lib/format';
 import { Avatar, Chip, CritPill, EnvChip, KeyBtn, KeyLink, KindTag, PersonTag, SearchField, SelectField, StatusPill, StatusTag, matches, useSort } from './ui';
 
 export type KpiTarget = 'open' | 'inprog' | 'blocked' | 'overdue' | 'done30' | 'prd7';
@@ -419,7 +419,8 @@ export function Comentarios({ m, open }: Ctx) {
   const all = useMemo(() => {
     const out: { i: Issue; c: Issue['comments'][number]; tags: string[] }[] = [];
     const now = Date.now();
-    for (const i of m.issues) for (const c of i.comments) if (now - c.at <= days * DAY) out.push({ i, c, tags: tagsOf(c.text) });
+    // Solo incidencias abiertas: lo completado o cancelado se revisa en la sección Completadas
+    for (const i of m.issues) if (i.open) for (const c of i.comments) if (now - c.at <= days * DAY) out.push({ i, c, tags: tagsOf(c.text) });
     return out.sort((a, b) => b.c.at - a.c.at);
   }, [m, days]);
   const projs = useMemo(() => uniq(all.map((x) => x.i.project.key)), [all]);
@@ -443,7 +444,7 @@ export function Comentarios({ m, open }: Ctx) {
         <Chip on={!tag} onClick={() => setTag('')}>Todos</Chip>
         {TAGS.map(([t]) => <Chip key={t} on={tag === t} onClick={() => setTag(t)}>{t[0].toUpperCase() + t.slice(1)} ({all.filter((x) => x.tags.includes(t)).length})</Chip>)}
       </div>
-      <p className="small muted" style={{ margin: 0 }}>Toca un comentario para ver a la derecha el historial completo de la incidencia. Las etiquetas salen de palabras clave en el texto (inferencia).</p>
+      <p className="small muted" style={{ margin: 0 }}>Solo incidencias abiertas; lo completado está en la sección Completadas. Toca un comentario para ver a la derecha el historial completo de la incidencia. Las etiquetas salen de palabras clave en el texto (inferencia).</p>
       <div className="panel list-scroll">
         {groups.length ? groups.map(([k, arr]) => (
           <div key={k}>
@@ -463,3 +464,70 @@ export function Comentarios({ m, open }: Ctx) {
   );
 }
 
+
+/* ───────── Completadas ───────── */
+type CPeriod = Period | 'todo';
+export function Completadas({ m, open, initPeriod = '7d' }: Ctx & { initPeriod?: CPeriod }) {
+  const [period, setPeriod] = useState<CPeriod>(initPeriod);
+  const [q, setQ] = useState('');
+  const [proj, setProj] = useState('');
+  const [dev, setDev] = useState('');
+  const [type, setType] = useState('');
+  const done = useMemo(() => {
+    const now = Date.now();
+    return m.issues
+      .filter((i) => isDone(i) && (period === 'todo' || inPeriod(i.resolved, period, now)))
+      .map((i) => {
+        // Quién la pasó al estado final: la última transición hacia el estado actual
+        const t = [...i.transitions].reverse().find((x) => x.to === i.status);
+        return { i, by: t?.by || '—', cycle: i.created ? (i.resolved! - i.created) / DAY : null };
+      })
+      .sort((a, b) => b.i.resolved! - a.i.resolved!);
+  }, [m, period]);
+  const projs = useMemo(() => uniq(done.map((x) => x.i.project.key)), [done]);
+  const devs = useMemo(() => uniq(done.map((x) => x.i.assignee)), [done]);
+  const types = useMemo(() => uniq(done.map((x) => x.i.type)), [done]);
+  const rows = done.filter((x) => (!proj || x.i.project.key === proj) && (!dev || x.i.assignee === dev) && (!type || x.i.type === type) && matches(q, x.i.key, x.i.summary, x.i.assignee, x.by));
+  const groups = useMemo(() => {
+    const map = new Map<string, typeof rows>();
+    for (const x of rows.slice(0, 500)) { const k = dayOf(x.i.resolved!); if (!map.has(k)) map.set(k, []); map.get(k)!.push(x); }
+    return [...map.entries()];
+  }, [rows]);
+  const cycles = rows.map((x) => x.cycle).filter((c): c is number => c != null);
+  const people = new Set(rows.map((x) => x.i.assignee)).size;
+  const label = period === 'todo' ? 'en toda la sincronización' : (PERIODS.find(([k]) => k === period)?.[1] || '').toLowerCase();
+  return (
+    <section className="section">
+      <div className="section-head"><h2>Actividades completadas</h2><span className="count-line num">{rows.length} completadas {label}{rows.length ? ` · ${people} ${people === 1 ? 'persona' : 'personas'} · ciclo mediano ${r1(median(cycles)) ?? '—'} d` : ''}</span></div>
+      <div className="chips">
+        {PERIODS.map(([k, l]) => <Chip key={k} on={period === k} onClick={() => setPeriod(k)}>{l}</Chip>)}
+        <Chip on={period === 'todo'} onClick={() => setPeriod('todo')}>Todo lo sincronizado</Chip>
+      </div>
+      <div className="filters">
+        <SearchField id="cp-q" value={q} onChange={setQ} placeholder="Clave, resumen o persona" />
+        <SelectField id="cp-proj" label="Proyecto" value={proj} onChange={setProj} options={projs} />
+        <SelectField id="cp-dev" label="Responsable" value={dev} onChange={setDev} options={devs} />
+        <SelectField id="cp-type" label="Tipo de issue" value={type} onChange={setType} options={types} />
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>Incidencias que pasaron a un estado final (por ejemplo «Actividad completada»). Las canceladas no aparecen. El ciclo es el tiempo entre la creación y el cierre.</p>
+      <div className="tbl-wrap"><table className="tbl">
+        <thead><tr><th>Hora</th><th>Clave</th><th>Resumen</th><th>Proyecto</th><th>Responsable</th><th>Pasó a final</th><th className="r">Ciclo</th></tr></thead>
+        <tbody>{groups.length ? groups.map(([k, arr]) => [
+          <tr className="grp-row" key={k}><td colSpan={7}><span>{relDayLabel(arr[0].i.resolved!)}</span><span className="n">{arr.length}</span></td></tr>,
+          ...arr.map(({ i, by, cycle }) => (
+            <tr className="click" key={i.key} onClick={() => open(i.key)}>
+              <td className="small num" style={{ whiteSpace: 'nowrap' }}>{fH(i.resolved!)}</td>
+              <td><KeyLink i={i} /></td>
+              <td className="sum"><div className="clamp">{i.summary}</div><div className="small muted">{i.type}</div></td>
+              <td className="small">{i.project.key}</td>
+              <td><PersonTag name={i.assignee} avatars={m.avatars} /></td>
+              <td><PersonTag name={by} avatars={m.avatars} /></td>
+              <td className="r">{daysTxt(cycle)}</td>
+            </tr>
+          )),
+        ]) : <tr><td colSpan={7} className="empty">No hay actividades completadas con estos filtros.</td></tr>}</tbody>
+      </table></div>
+      {rows.length > 500 && <p className="small muted" style={{ margin: 0 }}>Se muestran las 500 más recientes. Acota con los filtros para ver el resto.</p>}
+    </section>
+  );
+}

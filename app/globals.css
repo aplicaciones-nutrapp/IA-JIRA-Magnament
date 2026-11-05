@@ -346,3 +346,8 @@ main{container-type:inline-size;container-name:main}
 }
 .drawer .tbl-wrap{overflow:visible}
 .drawer .tbl thead th{top:-18px}
+/* Completadas: filas de grupo por día dentro de la tabla */
+.tbl tr.grp-row td{background:var(--surface-2);font-weight:600;font-size:12.5px;padding:8px 10px}
+.tbl tr.grp-row td{border-bottom:1px solid var(--line)}
+.tbl tr.grp-row span.n{float:right;font-family:var(--f-mono);font-weight:500;color:var(--muted)}
+nav.tabs .count.ok{background:var(--ok-soft);color:var(--ok)}
