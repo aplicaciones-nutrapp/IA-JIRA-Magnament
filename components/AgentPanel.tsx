@@ -30,7 +30,7 @@ function download(text: string, q: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export default function AgentPanel({ registerAsk, syncedAt, group }: { registerAsk: (fn: (q: string) => void) => void; syncedAt: number | null; group: string | null }) {
+export default function AgentPanel({ registerAsk, syncedAt, group, collapsed, onToggle }: { registerAsk: (fn: (q: string) => void) => void; syncedAt: number | null; group: string | null; collapsed: boolean; onToggle: (v?: boolean) => void }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -106,9 +106,14 @@ export default function AgentPanel({ registerAsk, syncedAt, group }: { registerA
 
   return (
     <aside className="agent" aria-label="Agente">
+      <button type="button" className="ag-rail" onClick={() => onToggle(false)} aria-label="Mostrar el agente" title="Mostrar el agente" hidden={!collapsed}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 3v10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg><span className="v">Agente{busy ? ' · respondiendo…' : ''}</span>
+      </button>
+      <div className="ag-body">
       <div className="ag-head">
         <h2>Agente</h2>
         <span className="note">{!syncedAt ? '' : group && group !== '*' ? `analiza el grupo «${group}»` : 'analiza todos los responsables'}</span>
+        <button type="button" className="btn sm ag-collapse" onClick={() => onToggle(true)} aria-label="Minimizar el agente" title="Minimizar el agente"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M13 3v10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>Minimizar</button>
       </div>
       <div className="ag-log" ref={logRef}>
         {msgs.length === 0 && (
@@ -148,6 +153,7 @@ export default function AgentPanel({ registerAsk, syncedAt, group }: { registerA
           </div>
         </div>
       </form>
+      </div>
     </aside>
   );
 }

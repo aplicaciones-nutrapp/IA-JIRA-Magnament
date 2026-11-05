@@ -33,6 +33,9 @@ const ms = (v: unknown): number | null => {
   return Number.isFinite(t) ? t : null;
 };
 const safeRe = (src: string) => { try { return new RegExp(src, 'i'); } catch { return /$^/; } };
+const CANCEL = /cancel|descart|anulad|rechazad|won'?t do|duplicad/i;
+/** Completado de verdad: estado final que no es cancelación. */
+const isCompleted = (i: { cat: Cat; canceled: boolean; resolved: number | null }) => i.cat === 'done' && !i.canceled && !!i.resolved;
 
 /* ───────── detección de campos personalizados ───────── */
 interface Fields { sp?: string; sprint?: string; flagged?: string; flaggedName: string }
@@ -125,16 +128,36 @@ export function buildModel(raw: Raw[], names: Record<string, string>, o: { site:
   const F = detectFields(names, raw);
   const now = o.now ?? Date.now();
 
+  /* fotos de las personas (responsables, reportadores, autores de comentarios y transiciones) */
+  const avatars: Record<string, string> = {};
+  const addAv = (u: Raw) => {
+    const n = u?.displayName, url = u?.avatarUrls?.['48x48'];
+    if (n && url && !avatars[n]) avatars[n] = url;
+  };
+  for (const it of raw) {
+    const f = it.fields || {};
+    addAv(f.assignee); addAv(f.reporter);
+    for (const c of f.comment?.comments || []) addAv(c.author);
+    for (const h of it.changelog?.histories || []) addAv(h.author);
+  }
+
   const issues: Issue[] = raw.map((it) => {
     const b = normalize(it, F, o.site);
     const lastT = b.transitions.at(-1);
     const statusSince = lastT?.at ?? b.created;
+    const canceled = b.cat === 'done' && CANCEL.test(b.status);
+    // Si el workflow no llena la resolución, la fecha de completado es la de entrada al estado final
+    if (b.cat === 'done' && !b.resolved) b.resolved = statusSince;
     const seen = new Set([b.transitions[0]?.from].filter(Boolean));
     let backMoves = 0;
     for (const t of b.transitions) { if (seen.has(t.to)) backMoves++; seen.add(t.to); }
     const open = b.cat !== 'done';
     const lastComment = b.comments.at(-1) || null;
     const lastActivity = Math.max(b.created || 0, lastT?.at || 0, lastComment?.at || 0);
+    const acts: { at: number; by: string; kind: Issue['lastActivityKind'] }[] = [{ at: b.created || 0, by: b.reporter, kind: 'creación' }];
+    if (lastT) acts.push({ at: lastT.at, by: lastT.by, kind: 'cambio de estado' });
+    if (lastComment) acts.push({ at: lastComment.at, by: lastComment.by, kind: 'comentario' });
+    const lastAct = acts.reduce((x, y) => (y.at >= x.at ? y : x));
     const env = envOf(b.status);
     const facts: BlockFact[] = [];
     if (open) {
@@ -153,8 +176,8 @@ export function buildModel(raw: Raw[], names: Record<string, string>, o: { site:
     const daysInStatus = statusSince ? (now - statusSince) / DAY : null;
     const stale = b.cat === 'indeterminate' && !env && (daysInStatus ?? 0) >= R.inprog;
     return {
-      ...b, statusSince, daysInStatus, backMoves, open,
-      overdue: !!(open && b.due && b.due < now), env, lastActivity,
+      ...b, canceled, statusSince, daysInStatus, backMoves, open,
+      overdue: !!(open && b.due && b.due < now), env, lastActivity, lastActivityBy: lastAct.by, lastActivityKind: lastAct.kind,
       activeSprint: b.sprints.find((s) => s.state === 'active')?.name || null,
       blockFacts: facts, blockInfer, blocked: facts.length > 0, stale,
       quiet: open && b.cat === 'indeterminate' && (now - lastActivity) / DAY >= R.stale,
@@ -197,8 +220,8 @@ export function buildModel(raw: Raw[], names: Record<string, string>, o: { site:
   for (const i of issues) {
     const p = P(i.assignee);
     if (i.open) { p.open++; p.keys.push(i.key); if (i.cat === 'indeterminate') p.inprog++; p.spOpen += i.sp || 0; if (i.overdue) p.overdue++; if (i.blocked) p.blocked++; if (i.stale) p.stale++; }
-    if (i.resolved && now - i.resolved <= 30 * DAY) { p.done30++; p.spDone30 += i.sp || 0; }
-    if (i.resolved && i.created && now - i.resolved <= 90 * DAY) p.res.push((i.resolved - i.created) / DAY);
+    if (isCompleted(i) && now - i.resolved! <= 30 * DAY) { p.done30++; p.spDone30 += i.sp || 0; }
+    if (isCompleted(i) && i.created && now - i.resolved! <= 90 * DAY) p.res.push((i.resolved! - i.created) / DAY);
   }
   for (const i of issues) {
     for (const t of i.transitions) { const p = people.get(t.by); if (p && (!p.last || t.at > p.last)) p.last = t.at; }
@@ -214,7 +237,7 @@ export function buildModel(raw: Raw[], names: Record<string, string>, o: { site:
     if (!pm.has(k)) pm.set(k, { key: k, name: i.project.name, total: 0, open: 0, inprog: 0, overdue: 0, blocked: 0, stale: 0, done30: 0, oldest: 0, delay: 0 });
     const p = pm.get(k)!; p.total++;
     if (i.open) { p.open++; if (i.cat === 'indeterminate') p.inprog++; if (i.overdue) p.overdue++; if (i.blocked) p.blocked++; if (i.stale) p.stale++; if (i.created) p.oldest = Math.max(p.oldest, (now - i.created) / DAY); }
-    if (i.resolved && now - i.resolved <= 30 * DAY) p.done30++;
+    if (isCompleted(i) && now - i.resolved! <= 30 * DAY) p.done30++;
   }
   const projects = [...pm.values()].map((p) => ({ ...p, delay: p.overdue * 2 + p.blocked * 2 + p.stale })).sort((a, b) => b.delay - a.delay || b.open - a.open);
 
@@ -233,12 +256,12 @@ export function buildModel(raw: Raw[], names: Record<string, string>, o: { site:
   const w0 = mondayOf(now - 11 * 7 * DAY);
   const weeks: Week[] = Array.from({ length: 12 }, (_, k) => ({ start: w0 + k * 7 * DAY, created: 0, resolved: 0, prd: 0 }));
   const wi = (t: number | null) => { if (!t) return -1; const k = Math.floor((t - w0) / (7 * DAY)); return k >= 0 && k < 12 ? k : -1; };
-  for (const i of issues) { let k = wi(i.created); if (k >= 0) weeks[k].created++; k = wi(i.resolved); if (k >= 0) weeks[k].resolved++; }
+  for (const i of issues) { let k = wi(i.created); if (k >= 0) weeks[k].created++; k = isCompleted(i) ? wi(i.resolved) : -1; if (k >= 0) weeks[k].resolved++; }
   for (const d of deploys) if (d.env === 'PRD') { const k = wi(d.at); if (k >= 0) weeks[k].prd++; }
 
   /* KPIs */
   const open = issues.filter((i) => i.open);
-  const res30 = issues.filter((i) => i.resolved && now - i.resolved <= 30 * DAY);
+  const res30 = issues.filter((i) => isCompleted(i) && now - i.resolved! <= 30 * DAY);
   const kpi = {
     total: issues.length, open: open.length, inprog: open.filter((i) => i.cat === 'indeterminate').length,
     blocked: stoppers.filter((s) => s.kind === 'hecho').length, blockedInf: stoppers.filter((s) => s.kind === 'inferencia').length,
@@ -276,7 +299,7 @@ export function buildModel(raw: Raw[], names: Record<string, string>, o: { site:
   return {
     ref: now, site: o.site, jql: o.jql, truncated: o.truncated,
     fields: { sp: F.sp, sprint: F.sprint, flagged: F.flagged }, hasSP, rules: R,
-    kpi, alerts, stoppers, deploys, team, projects, sprints, weeks, issues,
+    kpi, alerts, stoppers, deploys, team, projects, sprints, weeks, issues, avatars,
     group: null, groups: [], groupMembers: [], groupMissing: [], groupAccountIds: [],
   };
 }

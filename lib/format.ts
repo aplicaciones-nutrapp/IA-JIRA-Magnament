@@ -13,4 +13,24 @@ export const fH = (t: number) => hfmt.format(t);
 export const fWD = (t: number) => wdfmt.format(t);
 export const dayOf = (t: number) => dayKey.format(t);
 export const daysTxt = (n: number | null | undefined) => (n == null ? '—' : n < 1 ? '<1 d' : `${Math.floor(n)} d`);
-export const isoDay = (t: number | null | undefined) => (t ? new Date(t).toISOString().slice(0, 10) : undefined);
+/* ───────── periodos relativos a hoy (hora de Bogotá) ───────── */
+export type Period = 'hoy' | 'ayer' | '7d' | '30d';
+export const PERIODS: [Period, string][] = [['hoy', 'Hoy'], ['ayer', 'Ayer'], ['7d', 'Últimos 7 días'], ['30d', 'Últimos 30 días']];
+const DAYMS = 864e5;
+export function inPeriod(t: number | null | undefined, p: Period, now = Date.now()) {
+  if (!t) return false;
+  if (p === 'hoy') return dayOf(t) === dayOf(now);
+  if (p === 'ayer') return dayOf(t) === dayOf(now - DAYMS);
+  return now - t <= (p === '7d' ? 7 : 30) * DAYMS;
+}
+/** «Hoy», «Ayer», «Antes de ayer» o la fecha con día de la semana. */
+export function relDayLabel(t: number, now = Date.now()) {
+  const d = dayOf(t);
+  if (d === dayOf(now)) return 'Hoy';
+  if (d === dayOf(now - DAYMS)) return 'Ayer';
+  if (d === dayOf(now - 2 * DAYMS)) return 'Antes de ayer';
+  const s = fWD(t);
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+export const isoDay =(t: number | null | undefined) => (t ? new Date(t).toISOString().slice(0, 10) : undefined);

@@ -38,6 +38,8 @@ export interface Issue {
   parent: string | null;
   description: string;
   // derivados
+  /** En estado final de cancelación: no cuenta como completado. */
+  canceled: boolean;
   statusSince: number | null;
   daysInStatus: number | null;
   backMoves: number;
@@ -45,6 +47,9 @@ export interface Issue {
   overdue: boolean;
   env: EnvName | null;
   lastActivity: number;
+  /** Quién hizo la última actividad y de qué tipo fue. */
+  lastActivityBy: string;
+  lastActivityKind: 'creación' | 'cambio de estado' | 'comentario';
   activeSprint: string | null;
   blockFacts: BlockFact[];
   blockInfer: { why: string; since: number; comment: IssueComment } | null;
@@ -110,6 +115,8 @@ export interface Model {
   sprints: SprintStat[];
   weeks: Week[];
   issues: Issue[];
+  /** Foto (URL de avatar de Atlassian) por nombre de persona. */
+  avatars: Record<string, string>;
   /** Grupo de responsables aplicado (null = todos) y grupos configurados en TEAM_GROUPS. */
   group: string | null;
   groups: string[];

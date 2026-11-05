@@ -31,7 +31,42 @@ export function prioRank(p?: string | null): number {
   return 3;
 }
 
-export const median = (a: number[]): number | null => {
+/* ───────── tono de color de un estado ───────── */
+export type Tone = 'new' | 'progress' | 'approval' | 'dev' | 'qa' | 'review' | 'prd' | 'blocked' | 'done' | 'canceled';
+export const TONE_LABEL: [Tone, string][] = [
+  ['new', 'Por hacer'], ['progress', 'En curso'], ['approval', 'Aprobación'], ['dev', 'Despliegue DEV'], ['qa', 'Despliegue QA'],
+  ['review', 'Revisión / pruebas'], ['prd', 'Despliegue PROD'], ['blocked', 'Detenido'], ['done', 'Completado'], ['canceled', 'Cancelado'],
+];
+const CANCEL_RE = /cancel|descart|anulad|rechazad|won'?t do|duplicad/i;
+const DONE_RE = /completad|finaliz|cerrad|terminad|resuelt|^listo$|^done$/i;
+const NEW_RE = /por hacer|backlog|to do|pendiente$|abierto|nuevo/i;
+const APPROVAL_RE = /aprobaci[oó]n|stakeholder|por aprobar/i;
+const REVIEW_RE = /revisi[oó]n|pruebas|regresi[oó]n|aprobado por qa|testing|\buat\b|validaci[oó]n/i;
+const reCache = new Map<string, RegExp>();
+const rx = (src: string) => {
+  if (!reCache.has(src)) { let r: RegExp; try { r = new RegExp(src, 'i'); } catch { r = /$^/; } reCache.set(src, r); }
+  return reCache.get(src)!;
+};
+/** Color de un estado. `cat` es la categoría de Jira cuando se conoce (el estado actual); en el historial se deduce del nombre. */
+export function toneOf(status: string, cat: string | undefined, r: { dev: string; qa: string; prd: string; block: string }): Tone {
+  const s = status || '';
+  if (cat === 'done' || (!cat && (DONE_RE.test(s) || CANCEL_RE.test(s)))) return CANCEL_RE.test(s) ? 'canceled' : 'done';
+  if (rx(r.block).test(s)) return 'blocked';
+  if (rx(r.prd).test(s)) return 'prd';
+  if (rx(r.qa).test(s)) return 'qa';
+  if (rx(r.dev).test(s)) return 'dev';
+  if (APPROVAL_RE.test(s)) return 'approval';
+  if (REVIEW_RE.test(s)) return 'review';
+  if (cat === 'new' || (!cat && NEW_RE.test(s))) return 'new';
+  return 'progress';
+}
+/** Tono estable a partir de un texto (proyectos, personas). */
+export const hueOf = (s: string) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+
+/** Completado de verdad: estado final que no es cancelación y con fecha de completado. */
+export const isDone = (i: { cat: string; canceled?: boolean; resolved: number | null }) => i.cat === 'done' && !i.canceled && !!i.resolved;
+
+export const median =(a: number[]): number | null => {
   if (!a.length) return null;
   const s = [...a].sort((x, y) => x - y);
   const m = s.length >> 1;

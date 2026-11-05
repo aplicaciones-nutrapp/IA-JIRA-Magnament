@@ -4,7 +4,10 @@ import type { Model, SyncError } from '@/lib/types';
 import { fDT } from '@/lib/format';
 import AgentPanel from './AgentPanel';
 import IssueDrawer from './IssueDrawer';
-import { Comentarios, Despliegues, Equipo, Resumen, Stoppers, Tareas, defaultTF, type TF } from './views';
+import PersonDrawer from './PersonDrawer';
+import type { Period } from '@/lib/format';
+import { Comentarios, Despliegues, Equipo, Resumen, Stoppers, Tareas, defaultTF, type KpiTarget, type TF } from './views';
+import { RulesCtx } from './ui';
 
 const VIEWS = [
   ['resumen', 'Resumen'], ['equipo', 'Equipo'], ['stoppers', 'Stoppers'], ['tareas', 'Tareas'],
@@ -13,6 +16,8 @@ const VIEWS = [
 type View = (typeof VIEWS)[number][0];
 const REFRESH_MIN = Number(process.env.NEXT_PUBLIC_REFRESH_MINUTES) || 5;
 const GROUP_KEY = 'di.group';
+const AGENT_KEY = 'di.agent-collapsed';
+const PERIOD_KEY = 'di.period';
 const isWide = () => typeof window !== 'undefined' && window.matchMedia('(min-width:1180px)').matches;
 
 export default function Dashboard() {
@@ -22,6 +27,11 @@ export default function Dashboard() {
   const [view, setView] = useState<View>('resumen');
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [tf, setTf] = useState<TF>(defaultTF);
+  const [person, setPerson] = useState<string | null>(null);
+  const [period, setPeriodState] = useState<Period>('hoy');
+  const [agentCollapsed, setAgentCollapsed] = useState(false);
+  // Filtros iniciales al llegar desde una métrica del resumen (n fuerza a reiniciar la vista)
+  const [preset, setPreset] = useState<{ n: number; stop?: 'todos' | 'hechos' | 'inferidos'; dep?: { env: 'todos' | 'DEV' | 'QA' | 'PRD'; days: number } }>({ n: 0 });
   const askFn = useRef<((q: string) => void) | null>(null);
   const headerRef = useRef<HTMLElement>(null);
   // null = grupo por defecto del servidor (TEAM_DEFAULT_GROUP); '*' = todos; otro valor = nombre del grupo
@@ -58,7 +68,12 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    try { groupRef.current = localStorage.getItem(GROUP_KEY); } catch { /* sin almacenamiento */ }
+    try {
+      groupRef.current = localStorage.getItem(GROUP_KEY);
+      setAgentCollapsed(localStorage.getItem(AGENT_KEY) === '1');
+      const per = localStorage.getItem(PERIOD_KEY) as Period | null;
+      if (per && ['hoy', 'ayer', '7d', '30d'].includes(per)) setPeriodState(per);
+    } catch { /* sin almacenamiento */ }
     load();
     const id = setInterval(() => { if (document.visibilityState === 'visible') load(); }, REFRESH_MIN * 60000);
     return () => clearInterval(id);
@@ -87,16 +102,36 @@ export default function Dashboard() {
 
   const byKey = useMemo(() => new Map((model?.issues || []).map((i) => [i.key, i])), [model]);
   const go = (v: View) => { window.location.hash = v; };
-  const ask = useCallback((q: string) => { if (!isWide()) window.location.hash = 'agente'; askFn.current?.(q); }, []);
+  const toggleAgent = useCallback((v?: boolean) => {
+    setAgentCollapsed((cur) => {
+      const next = v ?? !cur;
+      try { localStorage.setItem(AGENT_KEY, next ? '1' : '0'); } catch { /* sin almacenamiento */ }
+      return next;
+    });
+  }, []);
+  const setPeriod = useCallback((p: Period) => { setPeriodState(p); try { localStorage.setItem(PERIOD_KEY, p); } catch { /* sin almacenamiento */ } }, []);
+  const ask = useCallback((q: string) => { if (!isWide()) window.location.hash = 'agente'; else toggleAgent(false); setPerson(null); askFn.current?.(q); }, [toggleAgent]);
   const registerAsk = useCallback((fn: (q: string) => void) => { askFn.current = fn; }, []);
   const closeDrawer = useCallback(() => setOpenKey(null), []);
+  const closePerson = useCallback(() => setPerson(null), []);
+  const onKpi = (t: KpiTarget) => {
+    const n = preset.n + 1;
+    if (t === 'blocked') { setPreset({ n, stop: 'hechos' }); go('stoppers'); return; }
+    if (t === 'prd7') { setPreset({ n, dep: { env: 'PRD', days: 7 } }); go('despliegues'); return; }
+    const map: Record<string, Partial<TF>> = {
+      open: { cat: 'abiertos' }, inprog: { cat: 'indeterminate' }, overdue: { cat: 'abiertos', flags: ['vencidos'] }, done30: { cat: 'todos', flags: ['completados30'] },
+    };
+    setTf({ ...defaultTF, ...map[t] });
+    go('tareas');
+  };
   const logout = async () => { await fetch('/api/auth/logout', { method: 'POST' }); window.location.href = '/login'; };
 
-  const ctx = model ? { m: model, byKey, open: setOpenKey } : null;
+  const ctx = model ? { m: model, byKey, open: setOpenKey, openPerson: setPerson } : null;
   const hot = model ? model.stoppers.filter((s) => s.kind === 'hecho').length : 0;
 
   return (
-    <div className={`view-${view}`}>
+    <RulesCtx.Provider value={model?.rules ?? null}>
+    <div className={`view-${view}${agentCollapsed ? ' agent-collapsed' : ''}`}>
       <header className="top" ref={headerRef}>
         <div className="top-in">
           <div className="brand">
@@ -107,16 +142,19 @@ export default function Dashboard() {
           </div>
           <div className="source">
             {model && model.groups.length > 0 && (
-              <select aria-label="Grupo de responsables" value={model.group ?? '*'} onChange={(e) => changeGroup(e.target.value)} disabled={busy}>
-                <option value="*">Todos los responsables</option>
-                {model.groups.map((g) => <option key={g} value={g}>{g}</option>)}
-              </select>
+              <label className="grp-sel">Grupo
+                <select value={model.group ?? '*'} onChange={(e) => changeGroup(e.target.value)} disabled={busy}>
+                  <option value="*">Todos los responsables</option>
+                  {model.groups.map((g) => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </label>
             )}
             <span className={`dot ${busy ? 'busy' : err ? 'err' : ''}`} />
             {model ? (
               <span title={model.jql}>{new URL(model.site).host} · sincronizado {fDT(model.ref)} · {model.issues.length} issues</span>
             ) : <span>{busy ? 'Conectando con Jira…' : 'Sin datos'}</span>}
             <button type="button" className="btn sm" onClick={() => load(true)} disabled={busy}>{busy ? 'Sincronizando…' : 'Sincronizar'}</button>
+            <button type="button" className="btn sm agent-toggle" onClick={() => toggleAgent()} aria-pressed={!agentCollapsed}>{agentCollapsed ? 'Mostrar agente' : 'Minimizar agente'}</button>
             <button type="button" className="btn ghost sm" onClick={logout}>Salir</button>
           </div>
         </div>
@@ -149,19 +187,21 @@ export default function Dashboard() {
           {model && model.truncated && <div className="banner"><p>La sincronización llegó al límite de páginas (JIRA_MAX_PAGES). Acota el JQL o sube el límite para traer todo.</p></div>}
           {ctx && model!.issues.length > 0 && (
             <>
-              {view === 'resumen' && <Resumen {...ctx} onProject={(p) => { setTf({ ...defaultTF, proj: p }); go('tareas'); }} />}
+              {view === 'resumen' && <Resumen {...ctx} onKpi={onKpi} onProject={(p) => { setTf({ ...defaultTF, proj: p }); go('tareas'); }} />}
               {view === 'equipo' && <Equipo {...ctx} />}
-              {view === 'stoppers' && <Stoppers {...ctx} />}
+              {view === 'stoppers' && <Stoppers key={`st-${preset.n}`} {...ctx} initKind={preset.stop} />}
               {view === 'tareas' && <Tareas {...ctx} tf={tf} setTf={setTf} />}
-              {view === 'despliegues' && <Despliegues {...ctx} />}
+              {view === 'despliegues' && <Despliegues key={`dp-${preset.n}`} {...ctx} init={preset.dep} />}
               {view === 'comentarios' && <Comentarios {...ctx} />}
             </>
           )}
         </main>
-        <AgentPanel registerAsk={registerAsk} syncedAt={model?.ref ?? null} group={model ? model.group ?? '*' : null} />
+        <AgentPanel registerAsk={registerAsk} syncedAt={model?.ref ?? null} group={model ? model.group ?? '*' : null} collapsed={agentCollapsed} onToggle={toggleAgent} />
       </div>
 
-      {openKey && byKey.get(openKey) && <IssueDrawer i={byKey.get(openKey)!} onClose={closeDrawer} onAsk={ask} />}
+      {person && model && <PersonDrawer name={person} m={model} period={period} setPeriod={setPeriod} onClose={closePerson} onOpenIssue={setOpenKey} escActive={!openKey} />}
+      {openKey && byKey.get(openKey) && <IssueDrawer i={byKey.get(openKey)!} avatars={model?.avatars || {}} onClose={closeDrawer} onAsk={ask} />}
     </div>
+    </RulesCtx.Provider>
   );
 }

@@ -13,7 +13,7 @@ function compact(i: Issue, full = false) {
     key: i.key, url: i.url, resumen: clip(i.summary, 120), proyecto: i.project.key, tipo: i.type,
     responsable: i.assignee, estado: i.status, categoria: i.cat, dias_en_estado: r1(i.daysInStatus),
     prioridad: i.priority, sp: i.sp ?? undefined, vence: day(i.due), vencido: i.overdue || undefined,
-    ultima_actividad: day(i.lastActivity),
+    ultima_actividad: day(i.lastActivity), ultima_actividad_por: `${i.lastActivityBy} (${i.lastActivityKind})`,
     bloqueo: i.blockFacts.length ? i.blockFacts.map((f) => f.why) : undefined,
     posible_bloqueo: i.blockInfer?.why, idas_y_vueltas: i.backMoves || undefined, sprint_activo: i.activeSprint ?? undefined,
   };
